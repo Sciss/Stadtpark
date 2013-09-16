@@ -27,22 +27,27 @@ object Application extends App with Runnable {
 
   def iterate(): Unit =
     Mellite.documentHandler.activeDocument match {
-      case Some(cd: ConfluentDocument) => iterate1(cd, cd.cursors.cursor)
-      case Some(ed: EphemeralDocument) => iterate1(ed, ed.cursor)
+      case Some(cd: ConfluentDocument) => iterate1(cd)(cd.cursors.cursor)
+      case Some(ed: EphemeralDocument) => iterate1(ed)(ed.cursor)
       case Some(other) => println(s"Unsupported document type $other")
       case _ =>
     }
 
-  private def iterate1[S <: Sys[S]](doc: Document[S], cursor: Cursor[S]): Unit = {
+  private def iterate1[S <: Sys[S]](doc: Document[S])(implicit cursor: Cursor[S]): Unit = {
     val wins  = DocumentViewHandler.instance(doc).toList
     val tlvOpt = wins.collectFirst {
       case tf: TimelineView[S] => tf
     }
     tlvOpt.foreach { tlv =>
-      cursor.step { implicit tx =>
-        val c1  = Group.Config[S](Vec(3, 4), "Raspad441.aif", 1.0)
-        val g1  = Group(doc, tlv.group.entity, c1)
-        g1.iterate()
+      val g1Opt = cursor.step { implicit tx =>
+        tlv.group.entity.modifiableOption.map { group =>
+          val c1  = Group.Config[S](Vec(3, 4), "Raspad441.aif", loopOverlap = 0.5)
+          Group(doc, group, c1)
+        }
+      }
+      g1Opt.foreach { g1 =>
+        val proc = g1.iterate()
+        proc.monitor()
       }
     }
   }
