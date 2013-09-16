@@ -11,9 +11,6 @@ import de.sciss.lucre.bitemp.BiGroup
 import de.sciss.mellite.gui.ActionBounceTimeline
 import de.sciss.lucre.stm.Cursor
 import de.sciss.processor.Processor
-import de.sciss.processor.impl.ProcessorImpl
-import scala.concurrent.{blocking, Await}
-import scala.concurrent.duration.Duration
 import java.io.File
 import de.sciss.synth.io.{SampleFormat, AudioFileSpec}
 import de.sciss.synth.io.AudioFileType.AIFF
@@ -22,9 +19,6 @@ object Group {
   case class Config[S <: Sys[S]](channels: Vec[Int], material: String, loopOverlap: Motion[S]) {
     def numChannels = channels.size
   }
-
-  // bug in Scala 2.10 - "bad symbolic reference. A signature in Group.class refers to type Modifiable"
-  type ProcMod[S <: Sys[S]] = BiGroup.Modifiable[S, Proc[S], Proc.Update[S]]
 
   def apply[S <: Sys[S]](document: Document[S], group: ProcMod[S] /* ProcGroup.Modifiable[S] */, config: Config[S])
                         (implicit tx: S#Tx, cursor: Cursor[S]): Group[S] = {
@@ -53,6 +47,8 @@ object Group {
           val busOption = Option.empty[Expr[S, Int]]
           val (_, proc) = ProcActions.insertAudioRegion(group = group, time = time, track = 0, grapheme = origin,
             selection = spanV, bus = busOption)
+          val procOut   = Util.resolveOutProc(document, group, config.channels.head)  // XXX TODO determine correct channels index
+          proc ~> procOut
           val overLen   = math.min(spanV.length, (config.loopOverlap.step * sampleRate).toLong)
           if (overLen > MinLen) {
             val fadeLen = overLen/4
@@ -64,6 +60,7 @@ object Group {
             val spanVOver = Span(0L, overLen)
             val (_, procOver) = ProcActions.insertAudioRegion(group = group, time = timeOver, track = 1,
               grapheme = origin, selection = spanVOver, bus = busOption)
+            procOver ~> procOut
             if (fadeLen > 0) {
               val fadeIn = FadeSpec.Value(numFrames = fadeLen)
               procOver.attributes.put(ProcKeys.attrFadeIn, fadeAttr(fadeIn))

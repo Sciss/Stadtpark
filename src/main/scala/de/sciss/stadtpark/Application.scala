@@ -41,7 +41,7 @@ object Application extends App with Runnable {
     tlvOpt.foreach { tlv =>
       val g1Opt = cursor.step { implicit tx =>
         tlv.group.entity.modifiableOption.map { group =>
-          val c1  = Group.Config[S](Vec(3, 4), "Raspad441.aif", loopOverlap = 0.5)
+          val c1  = Group.Config[S](Vec(3, 4).map(_ - 1), "Raspad441.aif", loopOverlap = 0.5)
           Group(doc, group, c1)
         }
       }
