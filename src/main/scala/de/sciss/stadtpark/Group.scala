@@ -90,11 +90,11 @@ object Group {
     implicit val ser = ProcGroup.Modifiable.serializer[S]
     val groupH  = tx.newHandle(group)
     val configH = tx.newHandle(config)
-    new Impl[S](document, groupH, configH, config.material)
+    new Impl[S](document, groupH, configH, config.idx)
   }
 
   private class Impl[S <: Sys[S]](document: Document[S], groupH: stm.Source[S#Tx, ProcMod[S] /* ProcGroup.Modifiable[S] */],
-                                  configH: stm.Source[S#Tx, Group.Config[S]], material: String)
+                                  configH: stm.Source[S#Tx, Group.Config[S]], groupIdx: Int)
                                  (implicit cursor: Cursor[S])
     extends Group[S] {
 
@@ -103,7 +103,7 @@ object Group {
 
       // locate the previous iteration's span
 
-      val bounceSpan = cursor.step { implicit tx =>
+      val predSpan = cursor.step { implicit tx =>
         val group   = groupH()
         val config  = configH()
         group.nearestEventBefore(Long.MaxValue - 1).fold[Span] {
@@ -146,25 +146,18 @@ object Group {
 
       // prepare bounce
 
-      val bounceLen   = bounceSpan.length
-      val serverCfg   = Server.Config()
-      val bounceFile  = File.createTempFile("bounce", ".aif", tmpDir)
-      val bounceSpec  = AudioFileSpec(AIFF, SampleFormat.Float, numChannels = 1, sampleRate = sampleRate)
-      ActionBounceTimeline.specToServerConfig(bounceFile, bounceSpec, serverCfg)
-      val bounceGain  = Gain(0f, normalized = false)
-      val bounceChans = Vec(0 to 0) // XXX TODO use proper indices here
-      val bounceCfg   = ActionBounceTimeline.PerformSettings(groupH, serverCfg, bounceGain, bounceSpan, bounceChans)
-      val bounce      = ActionBounceTimeline.perform(document, settings = bounceCfg)
+      val prdLen = predSpan.length
 
-      processor[Unit](s"Iteration<$material>") { p =>
+      processor[Unit](s"Iteration<groupIdx>") { p =>
         // bounce
-        p.await(bounce, offset = 0f, weight = 0.1f)
+        val predBnc   = bounce(groupH, predSpan, Vec(0))  // XXX TODO use proper channel indices here
+        val predFile  = p.await(predBnc, offset = 0f, weight = 0.1f)
         p.check()
 
         // create feature file
         val extrCfg           = FeatureExtraction.Config()
-        extrCfg.audioInput    = bounceFile
-        extrCfg.featureOutput = bounceFile.parent / s"${bounceFile.base}_feat.aif"
+        extrCfg.audioInput    = predFile
+        extrCfg.featureOutput = predFile.parent / s"${predFile.base}_feat.aif"
         val extrOut           = extrCfg.featureOutput replaceExt "xml"
         extrCfg.metaOutput    = Some(extrOut)
         val extr = FeatureExtraction(extrCfg)
@@ -175,26 +168,42 @@ object Group {
         @tailrec def segmentLoop(config: Group.Config[S], res: Vec[Span] = Vec.empty)(implicit tx: S#Tx): Vec[Span] = {
           val pred  = res.lastOption.getOrElse(Span(0L, 0L))
           val start = math.max(pred.start, pred.stop - config.windowOverlap.step.secframes)
-          val stop  = math.min(bounceLen, start + math.max(MinLen, config.windowLen.step.secframes))
+          val stop  = math.min(prdLen, start + math.max(MinLen, config.windowLen.step.secframes))
           val span0 = Span(start, stop)
-          val span  = if (bounceLen - span0.stop < span0.length/2) Span(start, bounceLen) else span0
+          val span  = if (prdLen - span0.stop < span0.length/2) Span(start, prdLen) else span0
           val res1  = res :+ span
-          if (span.stop < bounceLen) segmentLoop(config, res1) else res1
+          if (span.stop < prdLen) segmentLoop(config, res1) else res1
         }
 
         val segments = cursor.step { implicit tx => segmentLoop(configH()) }
         // segments.foreach(println)
 
         // prepare database folder
-
+        val matGroupH = cursor.step { implicit tx =>
+          val matGroup      = Util.resolveMaterialTimeline(document, groupIdx)
+          implicit val ser  = ProcGroup.Modifiable.serializer[S]
+          tx.newHandle(matGroup)
+        }
 
         val corrCfg             = FeatureCorrelation.Config()
         corrCfg.metaInput       = extrOut
         //  corrCfg.databaseFolder  =
-        val corr = FeatureCorrelation(corrCfg)
-        corr.start()
+        // val corr = FeatureCorrelation(corrCfg)
+        // corr.start()
 
       }
+    }
+
+    private def bounce(groupH: stm.Source[S#Tx, ProcGroup[S]], span: Span, channels: Vec[Int]): Processor[File, _] = {
+      requireNoTxn()
+      val serverCfg   = Server.Config()
+      val bounceFile  = File.createTempFile("bounce", ".aif", tmpDir)
+      val bounceSpec  = AudioFileSpec(AIFF, SampleFormat.Float, numChannels = channels.size, sampleRate = sampleRate)
+      ActionBounceTimeline.specToServerConfig(bounceFile, bounceSpec, serverCfg)
+      val bounceGain  = Gain(0f, normalized = false)
+      val bounceCfg   = ActionBounceTimeline.PerformSettings(groupH, serverCfg, bounceGain, span,
+        channels.map(i => i to i))
+      ActionBounceTimeline.perform(document, settings = bounceCfg)
     }
   }
 }

@@ -28,7 +28,7 @@ object Util {
 
   def findAudioFile[S <: Sys[S]](document: Document[S], file: File)(implicit tx: S#Tx): Option[Grapheme.Elem.Audio[S]] =
     document.collectElements {
-      case e: Element.AudioGrapheme[S] => e.entity
+      case e: Element.AudioGrapheme[S] if e.entity.artifact.value == file => e.entity
     } .headOption
 
   def resolveAudioFile[S <: Sys[S]](document: Document[S], file: File)(implicit tx: S#Tx): Grapheme.Elem.Audio[S] =
