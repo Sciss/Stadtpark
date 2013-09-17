@@ -48,7 +48,7 @@ package object stadtpark {
       proc.addListener {
         case prog @ Processor.Progress(_, _) =>
           val p = prog.toInt/3
-          while (p < lastProg) {
+          while (lastProg < p) {
             print('#')
             lastProg += 1
           }

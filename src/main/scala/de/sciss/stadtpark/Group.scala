@@ -16,7 +16,7 @@ import de.sciss.synth.io.AudioFileType.AIFF
 import de.sciss.strugatzki.{FeatureCorrelation, FeatureExtraction}
 import scala.annotation.tailrec
 import de.sciss.serial.{ImmutableSerializer, DataOutput, DataInput, Writable}
-import de.sciss.serial
+import de.sciss.{numbers, serial}
 
 object Group {
   object Config {
@@ -119,15 +119,15 @@ object Group {
       val lastSpan = lastSpans.reduce(_ union _)
 
       @tailrec def loop(sp: Span): Span = {
-        val sq = group.intersect(Span(sp.stop - MinLen, sp.stop)).collect {
+        val sq = group.intersect(Span(sp.start - MinLen, sp.start)).collect {
           case (sp2 @ Span(_, _), _) => sp2
         } .toList
 
         if (sq.isEmpty) sp else {
           val squ = sq.reduce(_ union _)
-          // XXX TODO BUG: intersect has open right end it seems
           val sp2 = sp union squ
-          if (sp2 == sp) sp else loop(sp2)
+          assert (sp2 != sp)
+          loop(sp2)
         }
       }
 
@@ -154,7 +154,7 @@ object Group {
       processor[Unit](s"Iteration<groupIdx>") { p =>
         // bounce
         val predBnc   = bounce(iterGroupH, predSpan, Vec(0))  // XXX TODO use proper channel indices here
-        val predFile  = p.await(predBnc, offset = 0f, weight = 0.1f)
+        val predFile  = p.await(predBnc, offset = 0f, weight = 0.05f)
         p.check()
 
         // create template feature file
@@ -165,7 +165,7 @@ object Group {
         predExCfg.metaOutput    = Some(predExOut)
         val predEx = FeatureExtraction(predExCfg)
         predEx.start()
-        p.await(predEx, offset = 0.1f, weight = 0.1f)
+        p.await(predEx, offset = 0.05f, weight = 0.05f)
         
         // create segments
         @tailrec def segmentLoop(config: Group.Config[S], res: Vec[Span] = Vec.empty)(implicit tx: S#Tx): Vec[Span] = {
@@ -185,13 +185,13 @@ object Group {
         val (matGroupH, matSpan) = cursor.step { implicit tx =>
           val matGroup      = Util.resolveMaterialTimeline(document, groupIdx)
           implicit val ser  = ProcGroup.Modifiable.serializer[S]
-          val stop0 = findLastContiguousSpan(matGroup).stop
-          val stop  = math.min(maxDatabaseLen.secframes, stop0)
+          val stop0         = findLastContiguousSpan(matGroup).stop
+          val stop          = math.min(maxDatabaseLen.secframes, stop0)
           tx.newHandle(matGroup) -> Span(0L, stop)
         }
 
         val matBnc  = bounce(matGroupH, matSpan, Vec(0))
-        val matFile = p.await(matBnc, offset = 0.2f, weight = 0.1f)
+        val matFile = p.await(matBnc, offset = 0.1f, weight = 0.05f)
 
         // create database feature file
         val matExCfg           = FeatureExtraction.Config()
@@ -204,14 +204,35 @@ object Group {
         matExCfg.metaOutput    = Some(matExOut)
         val matEx = FeatureExtraction(matExCfg)
         matEx.start()
-        p.await(matEx, offset = 0.3f, weight = 0.1f)
+        p.await(matEx, offset = 0.15f, weight = 0.05f)
 
-        val corrCfg             = FeatureCorrelation.Config()
-        corrCfg.metaInput       = predExOut
-        //  corrCfg.databaseFolder  =
-        // val corr = FeatureCorrelation(corrCfg)
-        // corr.start()
+        import numbers.Implicits._
 
+        // find matches
+        val numSegm     = segments.size
+        val matchWeight = 0.4f / numSegm
+
+        // println(s"predSpan $predSpan, numSegm $numSegm")
+
+        val matches     = segments.zipWithIndex.map { case (segm, segmIdx) =>
+          val corrCfg             = FeatureCorrelation.Config()
+          corrCfg.metaInput       = predExOut
+          corrCfg.databaseFolder  = dbDir
+          corrCfg.normalize       = false // XXX TODO: perhaps enable (need to copy norm feat file)
+          corrCfg.punchIn         = FeatureCorrelation.Punch(segm, temporalWeight = 0.5f) // XXX TODO: make weight configurable
+          corrCfg.maxBoost        = 20.dbamp
+          corrCfg.minPunch        = corrCfg.punchIn.span.length
+          corrCfg.maxPunch        = corrCfg.minPunch
+          corrCfg.numMatches      = 1
+          corrCfg.numPerFile      = corrCfg.numMatches
+
+          val corr = FeatureCorrelation(corrCfg)
+          corr.start()
+          p.await(corr, offset = 0.2f + segmIdx * matchWeight, weight = matchWeight)
+        }
+
+        // println()
+        // matches.foreach(println)
       }
     }
 
