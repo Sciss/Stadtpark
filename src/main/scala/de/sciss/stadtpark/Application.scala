@@ -2,16 +2,13 @@ package de.sciss.stadtpark
 
 import java.awt.EventQueue
 import de.sciss.mellite.{Document, EphemeralDocument, ConfluentDocument, Mellite}
-import de.sciss.mellite.gui.{TimelineView, DocumentViewHandler, MenuBar}
+import de.sciss.mellite.gui.MenuBar
 import de.sciss.desktop.{KeyStrokes, Menu}
 import de.sciss.lucre.stm.Cursor
 import de.sciss.lucre.synth.Sys
 import java.awt.event.KeyEvent
 
 object Application extends App with Runnable {
-  //  type S  = Confluent
-  //
-
   EventQueue.invokeLater(this)
 
   def run(): Unit = {
@@ -44,7 +41,7 @@ object Application extends App with Runnable {
     //    tlvOpt.foreach { tlv =>
 
     val g1 = cursor.step { implicit tx =>
-      implicit val rand = TxnRandom(0L)
+      implicit val rand = TxnRandom() // (0L)
       val c1 = Group.Config[S](idx = 0, loopOverlap = 0.5,
         windowLen = Motion.linrand[S](0.2, 0.5), windowOverlap = Motion.linrand[S](0.05, 0.2))
       Group(doc, c1)

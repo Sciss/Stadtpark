@@ -8,11 +8,12 @@ import de.sciss.mellite.gui.ActionArtifactLocation
 import de.sciss.lucre.synth.expr._
 import de.sciss.synth.io.AudioFile
 import de.sciss.lucre.expr.Expr
-import de.sciss.synth.SynthGraph
+import de.sciss.synth.{Curve, SynthGraph}
 import de.sciss.span.Span
 import de.sciss.synth.proc.graph.scan
 import de.sciss.synth.proc.ExprImplicits
 import scala.Some
+import de.sciss.numbers
 
 object Util {
   def findLocation[S <: Sys[S]](document: Document[S], dir: File)(implicit tx: S#Tx): Option[Artifact.Location[S]] =
@@ -194,4 +195,45 @@ object Util {
       proc ~> procOut
       group
     }
+
+  def adjustFadeIn[S <: Sys[S]](span: Span, proc: Proc[S], frames: Long, curve: Curve)(implicit tx: S#Tx): Unit =
+    adjustFade(span, proc, frames, curve, ProcKeys.attrFadeIn, ProcKeys.attrFadeOut)
+
+  def adjustFadeOut[S <: Sys[S]](span: Span, proc: Proc[S], frames: Long, curve: Curve)(implicit tx: S#Tx): Unit =
+    adjustFade(span, proc, frames, curve, ProcKeys.attrFadeOut, ProcKeys.attrFadeIn)
+
+  private def adjustFade[S <: Sys[S]](span: Span, proc: Proc[S], frames: Long, curve: Curve, dis: String, dat: String)
+                                     (implicit tx: S#Tx): Unit = {
+    import numbers.Implicits._
+    val len     = span.length
+    val attr    = proc.attributes
+    val datOpt  = attr[Attribute.FadeSpec](dat)
+    val fr      = math.min(len, frames)
+    val maxDat  = len - fr
+    val datLen  = datOpt.map(_.value.numFrames).getOrElse(0L)
+    if (datLen > maxDat) {
+      datOpt match {
+        case Some(Expr.Var(vr)) =>
+          val elemDat = FadeSpec.Elem.newConst[S](vr.value.copy(numFrames = maxDat))
+          vr()        = elemDat
+
+        case Some(ex) =>
+          val elemDat = FadeSpec.Elem.newConst[S](ex.value.copy(numFrames = maxDat))
+          val vr      = FadeSpec.Elem.newVar(elemDat)
+          attr.put(dat, Attribute.FadeSpec(vr))
+      }
+    }
+    val spec    = FadeSpec.Value(fr, curve, if (curve == Curve.exponential) -40.dbamp else 0f)
+    val elemDis = FadeSpec.Elem.newConst[S](spec)
+    attr[Attribute.FadeSpec](dis) match {
+      case Some(Expr.Var(vr)) =>
+        vr() = elemDis
+
+      case None =>
+        val vr  = FadeSpec.Elem.newVar(elemDis)
+        attr.put(dis, Attribute.FadeSpec(vr))
+
+      case _ =>
+    }
+  }
 }

@@ -6,10 +6,11 @@ import de.sciss.lucre.synth.Sys
 import scala.concurrent.stm.Txn
 import scala.concurrent.ExecutionContext
 import de.sciss.processor.Processor
-import scala.util.{Success, Failure}
 import de.sciss.lucre.bitemp.BiGroup
 import scala.util.Success
 import scala.util.Failure
+import scala.collection.generic.CanBuildFrom
+import language.higherKinds
 
 package object stadtpark {
   // bug in Scala 2.10 - "bad symbolic reference. A signature in Group.class refers to type Modifiable"
@@ -90,5 +91,21 @@ package object stadtpark {
   implicit class RichDouble(d: Double) {
     /** Translates the input number from seconds to sample frames. */
     def secframes: Long = (d * sampleRate).toLong
+  }
+
+  implicit final class RichIterableLike[A, CC[~] <: Iterable[~]](val it: CC[A]) extends AnyVal {
+    def pairMap[B, To](fun: (A, A) => B)(implicit cbf: CanBuildFrom[CC[A], B, To]): To = {
+      val b     = cbf(it)
+      val iter  = it.iterator
+      if (iter.hasNext) {
+        var pred = iter.next()
+        while (iter.hasNext) {
+          val succ = iter.next()
+          b   += fun(pred, succ)
+          pred = succ
+        }
+      }
+      b.result()
+    }
   }
 }

@@ -16,6 +16,7 @@ import de.sciss.strugatzki.{FeatureCorrelation, FeatureExtraction}
 import scala.annotation.tailrec
 import de.sciss.serial.{DataOutput, DataInput, Writable}
 import de.sciss.{numbers, serial}
+import de.sciss.synth.Curve
 
 object Group {
   object Config {
@@ -233,11 +234,18 @@ object Group {
 
         // place matches
         val placeOff = predSpan.stop + 1.0.secframes
+
+        val fadeLens0 = segments.pairMap { (a, b) => a intersect b match {
+          case sp: Span   => sp.length
+          case Span.Void  => 0L
+        }}
+        val fadeLens = (0.1.secframes +: fadeLens0) zip (fadeLens0 :+ 0.1.secframes)
+
         cursor.step { implicit tx =>
           val group   = iterGroupH()
           val config  = configH()
           val procOut = Util.resolveOutProc(document, group, config.channels.head)  // XXX TODO: channel
-          (segments zip matches).zipWithIndex.foreach { case ((segm, m), idx) =>
+          (segments zip matches zip fadeLens).zipWithIndex.foreach { case (((segm, m), (fadeIn, fadeOut)), idx) =>
             // Match(sim: Float, file: File, punch: Span, boostIn: Float, boostOut: Float)
             val gain  = (m.boostIn * m.boostOut).sqrt
             val time  = segm.start + placeOff
@@ -245,8 +253,11 @@ object Group {
             val span  = m.punch
             val (_, proc) = ProcActions.insertAudioRegion(group, time = time, track = idx % 2, grapheme = audio,
               selection = span, bus = None)
+            val procSpan = Span(time, time + span.length)
             if (gain != 1) ProcActions.adjustGain(proc, gain)
-            // XXX TODO: fade in and out
+
+            if (fadeIn  > 0) Util.adjustFadeIn (procSpan, proc, fadeIn , Curve.parametric(-1.5f))
+            if (fadeOut > 0) Util.adjustFadeOut(procSpan, proc, fadeOut, Curve.parametric( 1.5f))
             proc ~> procOut
           }
         }
