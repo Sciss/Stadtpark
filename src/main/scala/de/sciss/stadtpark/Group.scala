@@ -13,26 +13,24 @@ import de.sciss.processor.Processor
 import java.io.File
 import de.sciss.synth.io.{SampleFormat, AudioFileSpec}
 import de.sciss.synth.io.AudioFileType.AIFF
-import de.sciss.strugatzki.FeatureExtraction
+import de.sciss.strugatzki.{FeatureCorrelation, FeatureExtraction}
 import scala.annotation.tailrec
 import de.sciss.serial.{ImmutableSerializer, DataOutput, DataInput, Writable}
 import de.sciss.serial
 
 object Group {
-
   object Config {
     /** Creates a new group iterator configuration.
       *
-      * @param channels       the channels of the group, zero-based indices
-      * @param material       the material file name
+      * @param idx            the group index
       * @param loopOverlap    the loop overlap at the end of the phrase, in seconds
       * @param windowLen      the segmentation length in seconds
       * @param windowOverlap  the segmentation overlap in seconds
       */
-    def apply[S <: Sys[S]](channels: Vec[Int], material: String,
+    def apply[S <: Sys[S]](idx: Int,
                            loopOverlap: Motion[S], windowLen: Motion[S],
                            windowOverlap: Motion[S])(implicit tx: S#Tx): Config[S] = {
-      new ConfigImpl[S](channels, material, loopOverlap = loopOverlap, windowLen = windowLen,
+      new ConfigImpl[S](idx = idx, loopOverlap = loopOverlap, windowLen = windowLen,
         windowOverlap = windowOverlap)
     }
 
@@ -48,25 +46,27 @@ object Group {
       def read(in: DataInput, access: S#Acc)(implicit tx: S#Tx): Config[S] = {
         val version       = in.readShort()
         require (version == VERSION_COOKIE, s"Unexpected version cookie $version")
-        val channels      = ImmutableSerializer.indexedSeq[Int].read(in)
-        val material      = in.readUTF()
+        val idx           = in.readInt()
         val loopOverlap   = Motion.read(in, access)
         val windowLen     = Motion.read(in, access)
         val windowOverlap = Motion.read(in, access)
-        apply(channels = channels, material = material, loopOverlap = loopOverlap, windowLen = windowLen,
+        apply(idx = idx, loopOverlap = loopOverlap, windowLen = windowLen,
               windowOverlap = windowOverlap)
       }
     }
 
-    private final class ConfigImpl[S <: Sys[S]](val channels: Vec[Int], val material: String,
+    private final class ConfigImpl[S <: Sys[S]](val idx: Int,
                                                 val loopOverlap: Motion[S], val windowLen: Motion[S],
                                                 val windowOverlap: Motion[S]) extends Config[S] {
-      def numChannels = channels.size
+      def data = groups(idx)
+
+      def channels    = data.channels
+      def numChannels = data.numChannels
+      def material    = data.material
 
       def write(out: DataOutput): Unit = {
         out.writeShort(VERSION_COOKIE)
-        ImmutableSerializer.indexedSeq[Int].write(channels, out)
-        out.writeUTF(material)
+        out.writeInt(idx)
         loopOverlap.write(out)
         windowLen.write(out)
         windowOverlap.write(out)
@@ -74,12 +74,15 @@ object Group {
     }
   }
   sealed trait Config[S <: Sys[S]] extends Writable {
-    def channels: Vec[Int]
-    def material: String
+    def idx: Int
+    def data: GroupData
     def loopOverlap   : Motion[S]
     def windowLen     : Motion[S]
     def windowOverlap : Motion[S]
+
+    def channels: Vec[Int]
     def numChannels: Int
+    def material: String
   }
 
   def apply[S <: Sys[S]](document: Document[S], group: ProcMod[S] /* ProcGroup.Modifiable[S] */, config: Config[S])
@@ -162,7 +165,8 @@ object Group {
         val extrCfg           = FeatureExtraction.Config()
         extrCfg.audioInput    = bounceFile
         extrCfg.featureOutput = bounceFile.parent / s"${bounceFile.base}_feat.aif"
-        extrCfg.metaOutput    = Some(extrCfg.featureOutput replaceExt "xml")
+        val extrOut           = extrCfg.featureOutput replaceExt "xml"
+        extrCfg.metaOutput    = Some(extrOut)
         val extr = FeatureExtraction(extrCfg)
         extr.start()
         p.await(extr, offset = 0.1f, weight = 0.2f)
@@ -179,7 +183,17 @@ object Group {
         }
 
         val segments = cursor.step { implicit tx => segmentLoop(configH()) }
-        segments.foreach(println)
+        // segments.foreach(println)
+
+        // prepare database folder
+
+
+        val corrCfg             = FeatureCorrelation.Config()
+        corrCfg.metaInput       = extrOut
+        //  corrCfg.databaseFolder  =
+        val corr = FeatureCorrelation(corrCfg)
+        corr.start()
+
       }
     }
   }

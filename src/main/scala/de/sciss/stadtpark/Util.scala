@@ -127,4 +127,43 @@ object Util {
       // group.add(spanEx, p)
       p
     }
+
+  def findTimeline[S <: Sys[S]](document: Document[S], name: String)(implicit tx: S#Tx): Option[ProcMod[S]] =
+    document.collectElements {
+      case e: Element.ProcGroup[S] if e.name.value == name => e.entity
+    } .flatMap(_.modifiableOption).headOption
+
+  def resolveTimeline[S <: Sys[S]](document: Document[S], name: String)(implicit tx: S#Tx): ProcMod[S] =
+    findTimeline(document, name).getOrElse {
+      val group   = ProcGroup.Modifiable[S]
+      val elem    = Element.ProcGroup(name, group)
+      val folder  = resolveFolder(document, "Timelines")
+      folder.addLast(elem)
+      group
+    }
+
+  private def iterTimelineName(idx: Int) = s"Iter-${idx+1}"
+
+  private def materialTimelineName(idx: Int) = s"Material-${idx+1}"
+
+  def findIterTimeline[S <: Sys[S]](document: Document[S], idx: Int)(implicit tx: S#Tx): Option[ProcMod[S]] =
+    findTimeline(document, iterTimelineName(idx))
+
+  def resolveIterTimeline[S <: Sys[S]](document: Document[S], idx: Int)(implicit tx: S#Tx): ProcMod[S] =
+    resolveTimeline(document, iterTimelineName(idx))
+
+  def findMaterialTimeline[S <: Sys[S]](document: Document[S], idx: Int)(implicit tx: S#Tx): Option[ProcMod[S]] =
+    findTimeline(document, materialTimelineName(idx))
+
+  def resolveMaterialTimeline[S <: Sys[S]](document: Document[S], idx: Int)(implicit tx: S#Tx): ProcMod[S] =
+    findMaterialTimeline(document, idx).getOrElse {
+      val group     = resolveTimeline (document, materialTimelineName(idx))
+      val audio     = resolveAudioFile(document, audioDir / groups(idx).material)
+      val audioSpan = Span(0L, audio.value.spec.numFrames)
+      val (_, proc) = ProcActions.insertAudioRegion(group, time = 0L, track = 0, grapheme = audio,
+        selection = audioSpan, bus = None)
+      val procOut   = resolveOutProc(document, group, idx = 0)
+      proc ~> procOut
+      group
+    }
 }

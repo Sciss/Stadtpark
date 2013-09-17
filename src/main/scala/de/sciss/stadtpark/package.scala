@@ -28,6 +28,10 @@ package object stadtpark {
 
   // type Tx       = concurrent.stm.InTxn
 
+  val groups      = Vec(
+    GroupData(idx = 0, channels = Vec(0), material = "Raspad441.aif")
+  )
+
   def fadeAttr[S <: Sys[S]](init: FadeSpec.Value)(implicit tx: S#Tx): Attribute.FadeSpec[S] =
     Attribute.FadeSpec(FadeSpec.Elem.newVar(FadeSpec.Elem.newConst(init)))
 
