@@ -19,12 +19,15 @@ package object stadtpark {
   val tmpDir      = baseDir / "tmp"
   val materialDir = baseDir / "material"
   val audioDir    = baseDir / "audio_work"
+  val originFile  = audioDir / "AlphavilleIlArrive.aif"
 
   type Vec[+A]  = collection.immutable.IndexedSeq[A]
   val  Vec      = collection.immutable.IndexedSeq
 
   val sampleRate  = 44100.0
   val MinLen      = 32
+
+  val maxDatabaseLen  = 20 * 60.0 // 20 minutes
 
   // type Tx       = concurrent.stm.InTxn
 

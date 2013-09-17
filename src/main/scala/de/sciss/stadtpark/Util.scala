@@ -17,7 +17,7 @@ import scala.Some
 object Util {
   def findLocation[S <: Sys[S]](document: Document[S], dir: File)(implicit tx: S#Tx): Option[Artifact.Location[S]] =
     document.collectElements {
-      case e: Element.ArtifactLocation[S] => e.entity
+      case e: Element.ArtifactLocation[S] if e.entity.directory == dir => e.entity
     } .headOption
 
   def resolveLocation[S <: Sys[S]](document: Document[S], dir: File)(implicit tx: S#Tx): Artifact.Location[S] =
@@ -142,15 +142,43 @@ object Util {
       group
     }
 
-  private def iterTimelineName(idx: Int) = s"Iter-${idx+1}"
-
+  private def iterTimelineName    (idx: Int) = s"Iter-${idx+1}"
   private def materialTimelineName(idx: Int) = s"Material-${idx+1}"
 
   def findIterTimeline[S <: Sys[S]](document: Document[S], idx: Int)(implicit tx: S#Tx): Option[ProcMod[S]] =
     findTimeline(document, iterTimelineName(idx))
 
   def resolveIterTimeline[S <: Sys[S]](document: Document[S], idx: Int)(implicit tx: S#Tx): ProcMod[S] =
-    resolveTimeline(document, iterTimelineName(idx))
+    findIterTimeline(document, idx).getOrElse {
+      val group     = resolveTimeline (document, iterTimelineName(idx))
+      val origin    = resolveAudioFile(document, originFile)
+      val originV   = origin.value
+      val time      = 1.0.secframes
+      val spanV     = Span(0L, originV.spec.numFrames)
+      val busOption = Option.empty[Expr[S, Int]]
+      val (_, proc) = ProcActions.insertAudioRegion(group = group, time = time, track = 0, grapheme = origin,
+        selection = spanV, bus = busOption)
+      val procOut   = resolveOutProc(document, group, groups(idx).channels.head)
+      proc ~> procOut
+      val overLen   = math.min(spanV.length, 0.5.secframes)
+      if (overLen > MinLen) {
+        val fadeLen = overLen/4
+        if (fadeLen > 0) {
+          val fadeOut = FadeSpec.Value(numFrames = fadeLen)
+          proc.attributes.put(ProcKeys.attrFadeOut, fadeAttr(fadeOut))
+        }
+        val timeOver  = time + spanV.length - fadeLen
+        val spanVOver = Span(0L, overLen)
+        val (_, procOver) = ProcActions.insertAudioRegion(group = group, time = timeOver, track = 1,
+          grapheme = origin, selection = spanVOver, bus = busOption)
+        procOver ~> procOut
+        if (fadeLen > 0) {
+          val fadeIn = FadeSpec.Value(numFrames = fadeLen)
+          procOver.attributes.put(ProcKeys.attrFadeIn, fadeAttr(fadeIn))
+        }
+      }
+      group
+    }
 
   def findMaterialTimeline[S <: Sys[S]](document: Document[S], idx: Int)(implicit tx: S#Tx): Option[ProcMod[S]] =
     findTimeline(document, materialTimelineName(idx))

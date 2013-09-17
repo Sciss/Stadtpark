@@ -10,9 +10,11 @@ trait Processor2[A] extends ProcessorImpl[A, Any] {
     that.addListener {
       case Processor.Progress(_, p) => progress(p * weight + offset)
     }
-    blocking {
+    val res = blocking {
       Await.result(that, Duration.Inf)
     }
+    progress(offset + weight)
+    res
   }
 
   def check(): Unit = super.checkAborted()

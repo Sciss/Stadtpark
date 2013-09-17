@@ -34,23 +34,19 @@ object Application extends App with Runnable {
     }
 
   private def iterate1[S <: Sys[S]](doc: Document[S])(implicit cursor: Cursor[S]): Unit = {
-    val wins  = DocumentViewHandler.instance(doc).toList
-    val tlvOpt = wins.collectFirst {
-      case tf: TimelineView[S] => tf
+    //    val wins  = DocumentViewHandler.instance(doc).toList
+    //    val tlvOpt = wins.collectFirst {
+    //      case tf: TimelineView[S] => tf
+    //    }
+    //    tlvOpt.foreach { tlv =>
+
+    val g1 = cursor.step { implicit tx =>
+      implicit val rand = TxnRandom(0L)
+      val c1 = Group.Config[S](idx = 0, loopOverlap = 0.5,
+        windowLen = Motion.linrand[S](0.2, 0.5), windowOverlap = Motion.linrand[S](0.05, 0.2))
+      Group(doc, c1)
     }
-    tlvOpt.foreach { tlv =>
-      val g1Opt = cursor.step { implicit tx =>
-        implicit val rand = TxnRandom(0L)
-        tlv.group.entity.modifiableOption.map { group =>
-          val c1 = Group.Config[S](idx = 0, loopOverlap = 0.5,
-            windowLen = Motion.linrand[S](0.2, 0.5), windowOverlap = Motion.linrand[S](0.05, 0.2))
-          Group(doc, group, c1)
-        }
-      }
-      g1Opt.foreach { g1 =>
-        val proc = g1.iterate()
-        proc.monitor()
-      }
-    }
+    val proc = g1.iterate()
+    proc.monitor()
   }
 }

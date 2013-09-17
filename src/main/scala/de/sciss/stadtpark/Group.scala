@@ -85,63 +85,66 @@ object Group {
     def material: String
   }
 
-  def apply[S <: Sys[S]](document: Document[S], group: ProcMod[S] /* ProcGroup.Modifiable[S] */, config: Config[S])
-                        (implicit tx: S#Tx, cursor: Cursor[S]): Group[S] = {
-    implicit val ser = ProcGroup.Modifiable.serializer[S]
-    val groupH  = tx.newHandle(group)
+  def apply[S <: Sys[S]](document: Document[S], config: Config[S])(implicit tx: S#Tx, cursor: Cursor[S]): Group[S] = {
     val configH = tx.newHandle(config)
-    new Impl[S](document, groupH, configH, config.idx)
+    new Impl[S](document, configH, config.idx)
   }
 
-  private class Impl[S <: Sys[S]](document: Document[S], groupH: stm.Source[S#Tx, ProcMod[S] /* ProcGroup.Modifiable[S] */],
+  private class Impl[S <: Sys[S]](document: Document[S],
                                   configH: stm.Source[S#Tx, Group.Config[S]], groupIdx: Int)
                                  (implicit cursor: Cursor[S])
     extends Group[S] {
+
+    private def findLastStop(group: ProcGroup[S])(implicit tx: S#Tx): Long = {
+      // THIS IS BROKEN:
+      //      val max       = (Long.MaxValue >> 4) - 1
+      //      group.nearestEventBefore(max).getOrElse(max)
+      //      println(s"Yo chuck, found $max")
+
+      val sq = group.iterator.map(_._1).collect {
+        case sp: Span => sp.stop
+      } .toList
+
+      if (sq.isEmpty) sys.error("Timeline is empty")
+      sq.max
+    }
+
+    private def findLastContiguousSpan(group: ProcGroup[S])(implicit tx: S#Tx): Span = {
+      val stop      = findLastStop(group)
+      val foo       = group.intersect(Span(stop - MinLen, stop)).toList
+      val lastSpans: List[Span] = foo.collect {
+        case (sp2: Span, _) => sp2
+      }
+      if (lastSpans.isEmpty) sys.error(s"Timeline is empty $foo")
+      val lastSpan = lastSpans.reduce(_ union _)
+
+      @tailrec def loop(sp: Span): Span = {
+        val sq = group.intersect(Span(sp.stop - MinLen, sp.stop)).collect {
+          case (sp2 @ Span(_, _), _) => sp2
+        } .toList
+
+        if (sq.isEmpty) sp else {
+          val squ = sq.reduce(_ union _)
+          // XXX TODO BUG: intersect has open right end it seems
+          val sp2 = sp union squ
+          if (sp2 == sp) sp else loop(sp2)
+        }
+      }
+
+      loop(lastSpan)
+    }
 
     def iterate(): Processor[Unit, _] = {
       requireNoTxn()
 
       // locate the previous iteration's span
 
-      val predSpan = cursor.step { implicit tx =>
-        val group   = groupH()
-        val config  = configH()
-        group.nearestEventBefore(Long.MaxValue - 1).fold[Span] {
-          val originF   = audioDir / "AlphavilleIlArrive.aif"
-          val origin    = Util.resolveAudioFile(document, originF)
-          val originV   = origin.value
-          val time      = 1.0.secframes
-          val spanV     = Span(0L, originV.spec.numFrames)
-          val busOption = Option.empty[Expr[S, Int]]
-          val (_, proc) = ProcActions.insertAudioRegion(group = group, time = time, track = 0, grapheme = origin,
-            selection = spanV, bus = busOption)
-          val procOut   = Util.resolveOutProc(document, group, config.channels.head)  // XXX TODO determine correct channels index
-          proc ~> procOut
-          val overLen   = math.min(spanV.length, config.loopOverlap.step.secframes)
-          if (overLen > MinLen) {
-            val fadeLen = overLen/4
-            if (fadeLen > 0) {
-              val fadeOut = FadeSpec.Value(numFrames = fadeLen)
-              proc.attributes.put(ProcKeys.attrFadeOut, fadeAttr(fadeOut))
-            }
-            val timeOver  = time + spanV.length - fadeLen
-            val spanVOver = Span(0L, overLen)
-            val (_, procOver) = ProcActions.insertAudioRegion(group = group, time = timeOver, track = 1,
-              grapheme = origin, selection = spanVOver, bus = busOption)
-            procOver ~> procOut
-            if (fadeLen > 0) {
-              val fadeIn = FadeSpec.Value(numFrames = fadeLen)
-              procOver.attributes.put(ProcKeys.attrFadeIn, fadeAttr(fadeIn))
-            }
-            spanV.shift(time) union spanVOver.shift(timeOver)
-          } else {
-            spanV.shift(time)
-          }
-
-        } { stop =>
-          println(s"Jo chuck $stop")
-          ???
-        }
+      val (iterGroupH, predSpan) = cursor.step { implicit tx =>
+        val group   = Util.resolveIterTimeline(document, groupIdx)
+        implicit val ser = ProcGroup.Modifiable.serializer[S]
+        val groupH  = tx.newHandle(group)
+        val span    = findLastContiguousSpan(group)
+        groupH -> span
       }
 
       // prepare bounce
@@ -150,19 +153,19 @@ object Group {
 
       processor[Unit](s"Iteration<groupIdx>") { p =>
         // bounce
-        val predBnc   = bounce(groupH, predSpan, Vec(0))  // XXX TODO use proper channel indices here
+        val predBnc   = bounce(iterGroupH, predSpan, Vec(0))  // XXX TODO use proper channel indices here
         val predFile  = p.await(predBnc, offset = 0f, weight = 0.1f)
         p.check()
 
-        // create feature file
-        val extrCfg           = FeatureExtraction.Config()
-        extrCfg.audioInput    = predFile
-        extrCfg.featureOutput = predFile.parent / s"${predFile.base}_feat.aif"
-        val extrOut           = extrCfg.featureOutput replaceExt "xml"
-        extrCfg.metaOutput    = Some(extrOut)
-        val extr = FeatureExtraction(extrCfg)
-        extr.start()
-        p.await(extr, offset = 0.1f, weight = 0.2f)
+        // create template feature file
+        val predExCfg           = FeatureExtraction.Config()
+        predExCfg.audioInput    = predFile
+        predExCfg.featureOutput = predFile.parent / s"${predFile.base}_feat.aif"
+        val predExOut           = predExCfg.featureOutput replaceExt "xml"
+        predExCfg.metaOutput    = Some(predExOut)
+        val predEx = FeatureExtraction(predExCfg)
+        predEx.start()
+        p.await(predEx, offset = 0.1f, weight = 0.1f)
         
         // create segments
         @tailrec def segmentLoop(config: Group.Config[S], res: Vec[Span] = Vec.empty)(implicit tx: S#Tx): Vec[Span] = {
@@ -179,14 +182,32 @@ object Group {
         // segments.foreach(println)
 
         // prepare database folder
-        val matGroupH = cursor.step { implicit tx =>
+        val (matGroupH, matSpan) = cursor.step { implicit tx =>
           val matGroup      = Util.resolveMaterialTimeline(document, groupIdx)
           implicit val ser  = ProcGroup.Modifiable.serializer[S]
-          tx.newHandle(matGroup)
+          val stop0 = findLastContiguousSpan(matGroup).stop
+          val stop  = math.min(maxDatabaseLen.secframes, stop0)
+          tx.newHandle(matGroup) -> Span(0L, stop)
         }
 
+        val matBnc  = bounce(matGroupH, matSpan, Vec(0))
+        val matFile = p.await(matBnc, offset = 0.2f, weight = 0.1f)
+
+        // create database feature file
+        val matExCfg           = FeatureExtraction.Config()
+        matExCfg.audioInput    = matFile
+        val dbDir              = File.createTempFile("database", ".db", tmpDir)
+        dbDir.delete()
+        dbDir.mkdir()
+        matExCfg.featureOutput = dbDir / s"${matFile.base}_feat.aif"
+        val matExOut           = matExCfg.featureOutput replaceExt "xml"
+        matExCfg.metaOutput    = Some(matExOut)
+        val matEx = FeatureExtraction(matExCfg)
+        matEx.start()
+        p.await(matEx, offset = 0.3f, weight = 0.1f)
+
         val corrCfg             = FeatureCorrelation.Config()
-        corrCfg.metaInput       = extrOut
+        corrCfg.metaInput       = predExOut
         //  corrCfg.databaseFolder  =
         // val corr = FeatureCorrelation(corrCfg)
         // corr.start()
