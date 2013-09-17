@@ -2,11 +2,10 @@ package de.sciss.stadtpark
 
 import de.sciss.synth.proc._
 import de.sciss.lucre.stm
-import de.sciss.mellite.{Gain, ProcActions, Document}
+import de.sciss.mellite.{ProcActions, Gain, Document}
 import de.sciss.file._
 import de.sciss.lucre.synth.{InMemory, Server, Sys}
 import de.sciss.span.Span
-import de.sciss.lucre.expr.Expr
 import de.sciss.mellite.gui.ActionBounceTimeline
 import de.sciss.lucre.stm.Cursor
 import de.sciss.processor.Processor
@@ -15,7 +14,7 @@ import de.sciss.synth.io.{SampleFormat, AudioFileSpec}
 import de.sciss.synth.io.AudioFileType.AIFF
 import de.sciss.strugatzki.{FeatureCorrelation, FeatureExtraction}
 import scala.annotation.tailrec
-import de.sciss.serial.{ImmutableSerializer, DataOutput, DataInput, Writable}
+import de.sciss.serial.{DataOutput, DataInput, Writable}
 import de.sciss.{numbers, serial}
 
 object Group {
@@ -211,9 +210,7 @@ object Group {
         // find matches
         val numSegm     = segments.size
         val matchWeight = 0.4f / numSegm
-
         // println(s"predSpan $predSpan, numSegm $numSegm")
-
         val matches     = segments.zipWithIndex.map { case (segm, segmIdx) =>
           val corrCfg             = FeatureCorrelation.Config()
           corrCfg.metaInput       = predExOut
@@ -228,11 +225,31 @@ object Group {
 
           val corr = FeatureCorrelation(corrCfg)
           corr.start()
-          p.await(corr, offset = 0.2f + segmIdx * matchWeight, weight = matchWeight)
+          p.await(corr, offset = 0.2f + segmIdx * matchWeight, weight = matchWeight).apply(0)
         }
 
         // println()
         // matches.foreach(println)
+
+        // place matches
+        val placeOff = predSpan.stop + 1.0.secframes
+        cursor.step { implicit tx =>
+          val group   = iterGroupH()
+          val config  = configH()
+          val procOut = Util.resolveOutProc(document, group, config.channels.head)  // XXX TODO: channel
+          (segments zip matches).zipWithIndex.foreach { case ((segm, m), idx) =>
+            // Match(sim: Float, file: File, punch: Span, boostIn: Float, boostOut: Float)
+            val gain  = (m.boostIn * m.boostOut).sqrt
+            val time  = segm.start + placeOff
+            val audio = Util.resolveAudioFile(document, m.file)
+            val span  = m.punch
+            val (_, proc) = ProcActions.insertAudioRegion(group, time = time, track = idx % 2, grapheme = audio,
+              selection = span, bus = None)
+            if (gain != 1) ProcActions.adjustGain(proc, gain)
+            // XXX TODO: fade in and out
+            proc ~> procOut
+          }
+        }
       }
     }
 

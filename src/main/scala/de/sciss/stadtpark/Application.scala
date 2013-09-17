@@ -3,9 +3,10 @@ package de.sciss.stadtpark
 import java.awt.EventQueue
 import de.sciss.mellite.{Document, EphemeralDocument, ConfluentDocument, Mellite}
 import de.sciss.mellite.gui.{TimelineView, DocumentViewHandler, MenuBar}
-import de.sciss.desktop.Menu
+import de.sciss.desktop.{KeyStrokes, Menu}
 import de.sciss.lucre.stm.Cursor
 import de.sciss.lucre.synth.Sys
+import java.awt.event.KeyEvent
 
 object Application extends App with Runnable {
   //  type S  = Confluent
@@ -15,9 +16,11 @@ object Application extends App with Runnable {
 
   def run(): Unit = {
     import Menu._
+    import KeyStrokes._
+    import KeyEvent._
     MenuBar.instance.add(
       Group("stadtpark", "Stadtpark").add(
-        Item("iterate")("Iterate") {
+        Item("iterate")("Iterate" -> (menu2 + VK_I)) {
           iterate()
         }
       )
