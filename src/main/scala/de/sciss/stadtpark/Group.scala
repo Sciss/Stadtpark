@@ -7,7 +7,6 @@ import de.sciss.file._
 import de.sciss.lucre.synth.{Server, Sys}
 import de.sciss.span.Span
 import de.sciss.lucre.expr.Expr
-import de.sciss.lucre.bitemp.BiGroup
 import de.sciss.mellite.gui.ActionBounceTimeline
 import de.sciss.lucre.stm.Cursor
 import de.sciss.processor.Processor
@@ -65,9 +64,9 @@ object Group {
               val fadeIn = FadeSpec.Value(numFrames = fadeLen)
               procOver.attributes.put(ProcKeys.attrFadeIn, fadeAttr(fadeIn))
             }
-            spanV union spanVOver
+            spanV.shift(time) union spanVOver.shift(timeOver)
           } else {
-            spanV
+            spanV.shift(time)
           }
 
         } { stop =>

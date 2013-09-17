@@ -38,7 +38,7 @@ object Util {
       val imp     = ExprImplicits[S]
       import imp._
       val offset  = Longs  .newVar[S](0L)
-      val gain    = Doubles.newVar[S](0.0)
+      val gain    = Doubles.newVar[S](1.0)
       val spec    = AudioFile.readSpec(file)
       val artif   = loc.add(file)
       val graph   = Grapheme.Elem.Audio(artif, spec, offset, gain)
@@ -107,12 +107,10 @@ object Util {
   def resolveOutProc[S <: Sys[S]](document: Document[S], group: ProcMod[S], idx: Int)
                                  (implicit tx: S#Tx): Proc[S] =
     findOutProc(document, group, idx).getOrElse {
-      val p     = Proc[S]
       val name  = outProcName(idx)
-      p.attributes.put(ProcKeys.attrName, Attribute.String(Strings.newVar(Strings.newConst(name))))
       val bus   = resolveBus(document, idx)
-      p.attributes.put(ProcKeys.attrBus, Attribute.Int(bus))
-      val gr   = SynthGraph {
+      val p     = ProcActions.insertGlobalRegion(group, name, Some(bus))
+      val gr    = SynthGraph {
         import de.sciss.synth._
         import ugen._
         val in    = scan.InFix(ProcKeys.scanMainIn, 1)
@@ -124,8 +122,9 @@ object Util {
         Out.ar(bus, sig)
       }
       p.graph()   = SynthGraphs.newConst[S](gr)
-      val spanEx  = SpanLikes.newVar[S](SpanLikes.newConst(Span.All))
-      group.add(spanEx, p)
+      p.scans.add(ProcKeys.scanMainIn)
+      // val spanEx  = SpanLikes.newVar[S](SpanLikes.newConst(Span.All))
+      // group.add(spanEx, p)
       p
     }
 }
