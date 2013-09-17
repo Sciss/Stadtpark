@@ -79,4 +79,9 @@ package object stadtpark {
       }
     }
   }
+
+  implicit class RichDouble(d: Double) {
+    /** Translates the input number from seconds to sample frames. */
+    def secframes: Long = (d * sampleRate).toLong
+  }
 }

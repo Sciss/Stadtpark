@@ -14,4 +14,6 @@ trait Processor2[A] extends ProcessorImpl[A, Any] {
       Await.result(that, Duration.Inf)
     }
   }
+
+  def check(): Unit = super.checkAborted()
 }
