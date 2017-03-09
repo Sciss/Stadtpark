@@ -20,7 +20,7 @@ libraryDependencies ++= Seq(
   "de.sciss" %% "mellite" % "0.5.+"
 )
 
-retrieveManaged := true
+// retrieveManaged := true
 
 scalacOptions ++= Seq("-deprecation", "-unchecked", "-feature")
 
